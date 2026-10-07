@@ -150,6 +150,7 @@ io.on('connection', (socket) => {
       matches[roomCode].players.forEach((p, index) => {
          p.companyId = companies[index % companies.length].id;
          p.balance = companies[index % companies.length].baseCapital;
+         p.hasAnswered = false; // Estado para saber se já respondeu no turno atual
       });
       matches[roomCode].status = 'IN_PROGRESS';
       matches[roomCode].currentRound = 1;
@@ -167,26 +168,35 @@ io.on('connection', (socket) => {
     const { roomCode, choice } = data;
     const match = matches[roomCode];
     if (match) {
-      // Find the player and update their balance
       const player = match.players.find(p => p.socketId === socket.id);
-      if (player) {
-         player.balance += choice.financialImpact;
-      }
       
-      // Advance to next round (MVP simple logic)
-      match.currentRound++;
+      // Ignora se o jogador não foi encontrado ou se já respondeu neste turno
+      if (!player || player.hasAnswered) return;
       
-      // Update players state
-      io.to(roomCode).emit('game_started', match); 
+      // Aplica a escolha na conta dele
+      player.balance += choice.financialImpact;
+      player.hasAnswered = true;
       
-      if (match.currentRound <= scenarios.length) {
-         // Send next scenario after a short delay to simulate "processing"
-         setTimeout(() => {
-           io.to(roomCode).emit('new_scenario', scenarios[match.currentRound - 1]);
-         }, 1500);
+      // Checa se TODOS os jogadores da sala já responderam
+      const allAnswered = match.players.every(p => p.hasAnswered);
+      
+      if (allAnswered) {
+        // Se todos responderam, reseta o estado e passa o turno
+        match.players.forEach(p => p.hasAnswered = false);
+        match.currentRound++;
+        
+        io.to(roomCode).emit('game_started', match); 
+        
+        if (match.currentRound <= scenarios.length) {
+           setTimeout(() => {
+             io.to(roomCode).emit('new_scenario', scenarios[match.currentRound - 1]);
+           }, 1500);
+        } else {
+           io.to(roomCode).emit('game_over', match);
+        }
       } else {
-         // End game
-         io.to(roomCode).emit('game_over', match);
+        // Se ainda faltam pessoas, apenas atualiza o saldo visualmente na tela de quem já respondeu
+        io.to(roomCode).emit('game_started', match);
       }
     }
   });
